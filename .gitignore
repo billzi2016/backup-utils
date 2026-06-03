@@ -2,6 +2,5 @@
 ._*
 .DS_Store
 
-# 运行时生成的日志
-backup_*.log
-errors_*.log
+# 运行时生成的日志目录
+logs/

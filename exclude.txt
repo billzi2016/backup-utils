@@ -1,0 +1,10 @@
+# 备份排除列表
+# 每行一个顶层目录名（相对于源盘根目录）
+# # 开头为注释，空行忽略
+
+[只读]原始备份
+generated_mri
+IU_Datasets
+backup_utils
+$RECYCLE.BIN
+System Volume Information
