@@ -275,9 +275,9 @@ def run_backup() -> int:
                 if ok:
                     n_copied += 1
                     log(f"[OK] {src_file}")
-                    bar.advance(fname)
+                    bar.advance(str(src_file))
                 else:
-                    bar.advance(fname, error=True)
+                    bar.advance(str(src_file), error=True)
                     log_err(src_file, reason)
 
         bar.finish()
