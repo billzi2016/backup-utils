@@ -50,36 +50,31 @@ def load_excludes(path: Path) -> frozenset:
 # ── 进度条 ─────────────────────────────────────────────────────────────────
 
 class ProgressBar:
-    """无第三方依赖的终端进度条"""
+    """无第三方依赖的终端进度条（只显示待复制文件，不计跳过）"""
     BAR_WIDTH = 32
 
     def __init__(self, total: int):
-        self.total      = max(total, 1)
-        self.current    = 0
-        self.errors     = 0
-        self.skipped    = 0
-        self._start     = time.monotonic()
+        self.total   = max(total, 1)
+        self.current = 0
+        self.errors  = 0
+        self._start  = time.monotonic()
 
-    def advance(self, filename: str, *, skipped: bool = False, error: bool = False):
+    def advance(self, filename: str, *, error: bool = False):
         self.current += 1
         if error:
             self.errors += 1
-        if skipped:
-            self.skipped += 1
         self._draw(filename)
 
     def _draw(self, filename: str):
-        pct    = self.current / self.total
-        filled = int(self.BAR_WIDTH * pct)
-        bar    = "█" * filled + "░" * (self.BAR_WIDTH - filled)
+        pct     = self.current / self.total
+        filled  = int(self.BAR_WIDTH * pct)
+        bar     = "█" * filled + "░" * (self.BAR_WIDTH - filled)
         elapsed = time.monotonic() - self._start
         eta     = (elapsed / pct - elapsed) if pct > 0.001 else 0
-        # 文件名截断到固定宽度，保持进度条对齐
-        name = filename[-40:] if len(filename) > 40 else filename
+        name    = filename[-40:] if len(filename) > 40 else filename
         sys.stdout.write(
             f"\r [{bar}] {pct*100:5.1f}%"
             f"  {self.current:,}/{self.total:,}"
-            f"  跳过:{self.skipped:,}"
             f"  错误:{self.errors:,}"
             f"  ETA:{eta:4.0f}s"
             f"  {name:<40}"
@@ -87,8 +82,8 @@ class ProgressBar:
         sys.stdout.flush()
 
     def interrupt_print(self, msg: str):
-        """在进度条上方插入一行文字（不破坏进度条）"""
-        sys.stdout.write(f"\r{' ' * 120}\r")   # 清除当前行
+        """在进度条上方插入错误行（不破坏进度条）"""
+        sys.stdout.write(f"\r{' ' * 130}\r")
         print(msg, flush=True)
 
     def finish(self):
@@ -97,7 +92,6 @@ class ProgressBar:
         sys.stdout.write(
             f"\r [{bar}] 100.0%"
             f"  {self.current:,}/{self.total:,}"
-            f"  跳过:{self.skipped:,}"
             f"  错误:{self.errors:,}"
             f"  用时:{elapsed:.1f}s"
             f"{'':40}\n"
@@ -181,11 +175,21 @@ def walk_source(src: Path, excluded: frozenset, on_error=None):
         yield dirpath, rel, filenames
 
 
-def scan_total(src: Path, excluded: frozenset) -> int:
-    """预扫描统计待处理文件数（用于进度条分母）"""
+def scan_total(src: Path, dst: Path, excluded: frozenset) -> int:
+    """预扫描统计真正需要复制的文件数（目标已存在且大小一致的不计入）"""
     count = 0
-    for _, _, filenames in walk_source(src, excluded):
-        count += sum(1 for f in filenames if not f.startswith("."))
+    for dirpath, rel, filenames in walk_source(src, excluded):
+        dst_dir = dst / rel
+        for f in filenames:
+            if f.startswith("."):
+                continue
+            # 目标已存在且大小一致 → 断点续传会跳过，不计入进度总数
+            try:
+                if (dst_dir / f).stat().st_size == (dirpath / f).stat().st_size:
+                    continue
+            except Exception:
+                pass
+            count += 1
     return count
 
 
@@ -205,10 +209,10 @@ def run_backup() -> int:
     log_path = LOG_DIR / f"backup_{ts}.log"
     err_path = LOG_DIR / f"errors_{ts}.log"
 
-    # 预扫描
-    print(f"\n[扫描] 正在统计文件数量……")
-    total = scan_total(SRC, excluded)
-    print(f"[扫描] 共 {total:,} 个文件\n")
+    # 预扫描（排除已完成文件，只统计真正需要复制的数量）
+    print(f"\n[扫描] 正在统计待复制文件数量……")
+    total = scan_total(SRC, DST, excluded)
+    print(f"[扫描] 待复制 {total:,} 个文件\n")
 
     n_copied  = 0
     n_skipped = 0
@@ -258,12 +262,11 @@ def run_backup() -> int:
                 src_file = dirpath / fname
                 dst_file = dst_dir / fname
 
-                # 断点续传：目标已存在且大小一致则跳过
+                # 断点续传：目标已存在且大小一致则静默跳过（不计入进度条）
                 try:
                     if dst_file.exists() and dst_file.stat().st_size == src_file.stat().st_size:
                         n_skipped += 1
                         log(f"[跳过] {src_file}")
-                        bar.advance(fname, skipped=True)
                         continue
                 except Exception:
                     pass
