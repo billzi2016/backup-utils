@@ -1,0 +1,7 @@
+# exFAT 元数据文件
+._*
+.DS_Store
+
+# 运行时生成的日志
+backup_*.log
+errors_*.log
